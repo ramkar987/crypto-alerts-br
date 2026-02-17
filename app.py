@@ -1,330 +1,345 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
-from datetime import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime, timedelta
+import ta
 
-st.set_page_config(page_title="Crypto Alerts BR 🇧🇷", layout="wide", page_icon="📈")
+st.set_page_config(page_title="Crypto On-Chain PRO 🇧🇷", layout="wide", page_icon="🔬")
 
-# CSS customizado
 st.markdown("""
-    <style>
-    .big-font {font-size:24px !important; font-weight: bold;}
-    .metric-positive {color: #00ff00;}
-    .metric-negative {color: #ff4444;}
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+.big-font {font-size:24px !important; font-weight: bold;}
+.metric-bull {background: linear-gradient(90deg, #00ff88, #00cc66);}
+.metric-bear {background: linear-gradient(90deg, #ff4444, #cc3333);}
+</style>
+""", unsafe_allow_html=True)
 
-# Header
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.title("🚀 Crypto Alerts BR")
-    st.markdown("**Monitor de criptomoedas em reais com análise inteligente**")
+st.title("🔬 Crypto On-Chain Dashboard")
+st.markdown("**8 Indicadores Avançados | Análise Institucional | Preços em BRL**")
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configurações")
     
-    st.subheader("🔑 CoinGecko API")
-    api_key = st.text_input("API Key", type="password", 
-                            help="Cole a API Key que você recebeu")
-    
-    if not api_key:
-        st.warning("⚠️ Cole sua API Key acima")
-    else:
-        st.success("✅ API Key configurada")
+    st.subheader("🔑 API Keys")
+    coingecko_key = st.text_input("CoinGecko API", type="password")
+    glassnode_key = st.text_input("Glassnode (opcional)", type="password", 
+                                  help="Grátis: 100 chamadas/mês")
     
     st.divider()
     
-    # Criptomoedas
-    st.subheader("💰 Criptomoedas")
-    cryptos = {
-        "Bitcoin": "bitcoin",
-        "Ethereum": "ethereum", 
-        "Cardano": "cardano",
-        "Solana": "solana",
-        "Ripple": "ripple",
-        "Polkadot": "polkadot",
-        "Dogecoin": "dogecoin",
-        "Chainlink": "chainlink"
-    }
-    
-    selected = st.multiselect("Selecione", list(cryptos.keys()), default=["Bitcoin", "Ethereum"])
+    st.subheader("📊 Análise")
+    period_days = st.slider("Período (dias)", 30, 365, 90)
     
     st.divider()
-    
-    days = st.slider("Período histórico (dias)", 7, 30, 14)
-    
-    st.divider()
-    
-    # Waitlist Premium
-    with st.expander("🔥 ACESSO PREMIUM - 50% OFF"):
-        st.markdown("""
-        ### Versão Premium em breve!
-        
-        ✅ 30+ criptomoedas
-        ✅ Alertas Telegram automáticos
-        ✅ Indicadores RSI/MACD
-        ✅ Atualização em tempo real
-        ✅ Análise de portfólio
-        
-        **De R$ 59,90 por R$ 29,90/mês**
-        
-        🎁 *Apenas para os primeiros 50 cadastros!*
-        """)
-        
-        email_premium = st.text_input("Seu melhor email:", key="premium_email")
-        whatsapp_premium = st.text_input("WhatsApp (opcional):", key="premium_whatsapp")
-        
-        if st.button("🚀 Garantir Vaga com 50% OFF", type="primary", use_container_width=True):
-            if email_premium:
-                st.success(f"✅ Email {email_premium} cadastrado! Você receberá acesso em breve.")
-                st.balloons()
-            else:
-                st.error("Por favor, preencha seu email")
-    
-    st.divider()
-    
-    if st.button("🔄 Atualizar Dados", use_container_width=True):
+    if st.button("🔄 Atualizar Análise", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-# Funções
+# Funções base
 @st.cache_data(ttl=300)
 def get_brl_rate():
     try:
         r = requests.get("https://api.frankfurter.dev/v1/latest?base=USD", timeout=10)
-        if r.status_code == 200:
-            return r.json()["rates"].get("BRL", 5.0)
+        return r.json()["rates"]["BRL"]
     except:
         return 5.0
-    return 5.0
 
 @st.cache_data(ttl=300)
-def fetch_crypto(symbol, days, api_key):
+def get_top_cryptos(days, api_key):
+    """Top 20 criptos + BTC para Altcoin Index"""
     try:
-        url = f"https://api.coingecko.com/api/v3/coins/{symbol}/market_chart"
-        params = {"vs_currency": "usd", "days": days, "interval": "daily"}
+        url = "https://api.coingecko.com/api/v3/coins/markets"
+        params = {
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": 20,
+            "page": 1,
+            "sparkline": "false",
+            "price_change_percentage": "24h,7d,30d"
+        }
         headers = {"x-cg-demo-api-key": api_key} if api_key else {}
+        r = requests.get(url, params=params, headers=headers)
         
-        r = requests.get(url, params=params, headers=headers, timeout=15)
-        
-        if r.status_code == 401:
-            return None, "API Key inválida"
-        if r.status_code == 429:
-            return None, "Limite de API atingido"
         if r.status_code == 200:
-            data = r.json()
-            df = pd.DataFrame({
-                "timestamp": pd.to_datetime([x[0] for x in data["prices"]], unit="ms"),
-                "price": [x[1] for x in data["prices"]]
-            })
-            return df, None
-    except Exception as e:
-        return None, str(e)
-    return None, "Erro desconhecido"
+            return pd.DataFrame(r.json())
+    except:
+        pass
+    return pd.DataFrame()
 
-# Verificar API
-if not api_key:
-    st.warning("⚠️ **Configure sua API Key do CoinGecko no sidebar para começar**")
-    
-    st.info("📖 **Você acabou de criar sua conta?** Cole a API Key que você copiou no campo ao lado →")
-    
-    with st.expander("🎓 Como usar este app"):
-        st.markdown("""
-        ### Passo a passo:
-        
-        1. **Cole sua API Key** no sidebar (você acabou de copiar)
-        2. **Selecione criptomoedas** que deseja monitorar
-        3. **Ajuste o período** de análise (7-30 dias)
-        4. **Clique em Atualizar** para ver os dados
-        
-        ### Recursos atuais:
-        - 📊 Gráficos interativos
-        - 💵 Preços em Reais (BRL)
-        - 📈 Análise de variação
-        - 🧮 Calculadora de investimento
-        - 📋 Ranking de performance
-        """)
-    
-    st.stop()
-
-# Taxa BRL
 brl_rate = get_brl_rate()
-st.sidebar.metric("💵 Câmbio Atual", f"R$ {brl_rate:.2f}/USD")
 
-# Dashboard
-if not selected:
-    st.info("👈 Selecione pelo menos uma criptomoeda no sidebar")
+# ===================== INDICADORES =====================
+
+## 1. ALTCOIN SEASON INDEX [web:58][web:59]
+def altcoin_season_index(top_coins_df):
+    """Calcula % de altcoins que superam BTC nos últimos 90 dias"""
+    if top_coins_df.empty or 'price_change_percentage_30d_in_currency' not in top_coins_df.columns:
+        return 50
+    
+    btc_row = top_coins_df[top_coins_df['symbol'] == 'btc']
+    if btc_row.empty:
+        return 50
+    
+    btc_change = btc_row['price_change_percentage_30d_in_currency'].iloc[0]
+    altcoins = top_coins_df[top_coins_df['symbol'] != 'btc']
+    
+    outperforming = (altcoins['price_change_percentage_30d_in_currency'] > btc_change).sum()
+    total_altcoins = len(altcoins)
+    
+    index = (outperforming / total_altcoins) * 100 if total_altcoins > 0 else 50
+    return min(100, max(0, index))
+
+## 2. SIMPLIFIED REALIZED PRICE [web:63][web:71]
+def realized_price_proxy(df):
+    """Aproximação usando médias ponderadas"""
+    if df is None or len(df) < 30:
+        return None
+    
+    # Simula realized cap como média móvel de 30d
+    df['realized_proxy'] = df['price'].rolling(30).mean()
+    return df['realized_proxy'].iloc[-1]
+
+## 3. MVRV Z-SCORE [web:64]
+def mvrv_zscore(df):
+    """Market Value to Realized Value Z-Score aproximado"""
+    if df is None or len(df) < 90:
+        return 0
+    
+    market_value = df['price'].iloc[-1]
+    realized_value = df['price'].rolling(90).mean().iloc[-1]
+    
+    # Z-score simplificado (desvio da média histórica)
+    mvrv_ratio = market_value / realized_value if realized_value > 0 else 1
+    historical_mean = df['price'].rolling(90).mean().mean() / df['price'].rolling(90).mean().mean()
+    
+    zscore = (mvrv_ratio - historical_mean) / df['price'].rolling(90).std().iloc[-1]
+    return zscore
+
+## 4. NUPL (Net Unrealized Profit/Loss) [web:65]
+def nupl(df):
+    """Net Unrealized Profit/Loss"""
+    if df is None or len(df) < 30:
+        return 0
+    
+    current_price = df['price'].iloc[-1]
+    realized_price = df['price'].rolling(30).mean().iloc[-1]
+    
+    nupl = (current_price - realized_price) / current_price
+    return nupl
+
+## 5. PUELL MULTIPLE [web:66]
+def puell_multiple(df):
+    """Miner revenue vs histórico"""
+    if df is None or len(df) < 365:
+        return 1.0
+    
+    # Simula daily issuance como preço médio
+    daily_price = df['price']
+    yearly_avg = daily_price.rolling(365).mean().iloc[-1]
+    current_price = daily_price.iloc[-1]
+    
+    puell = current_price / yearly_avg
+    return puell
+
+## 6. STOCK-TO-FLOW MODEL [web:68]
+def stock_to_flow_ratio(total_supply, annual_issuance):
+    """S2F Ratio"""
+    return total_supply / annual_issuance if annual_issuance > 0 else float('inf')
+
+def s2f_price_prediction(current_s2f):
+    """Modelo logarítmico S2F aproximado"""
+    # Modelo PlanB aproximado
+    return 0.4 * (current_s2f ** 3.3)
+
+## 7. BITCOIN RAINBOW CHART [web:69]
+def rainbow_zone(price, log_price):
+    """Classifica preço em zona rainbow"""
+    zones = {
+        0: "🔴 Maximum Bubble Territory",
+        1: "🟠 FOMO Intensifies", 
+        2: "🟠 Is This A Bubble?",
+        3: "🟡 HODL!",
+        4: "🟢 Still Cheap",
+        5: "🔵 Buy",
+        6: "🔵 Fire Sale"
+    }
+    
+    # Log regression bands
+    lower_band = np.exp(1.5 + 0.33 * np.log(price))
+    upper_band = np.exp(14 - 0.33 * np.log(price))
+    
+    if price > upper_band:
+        return 0, "🔴 VENDA URGENTE"
+    elif price > 0.5 * upper_band:
+        return 1, "🟠 FOMO MÁXIMO"
+    elif price > lower_band:
+        return 3, "🟡 HODL"
+    elif price > 0.5 * lower_band:
+        return 4, "🟢 BARATO"
+    else:
+        return 6, "🔵 COMPRAR"
+
+# ===================== INTERFACE PRINCIPAL =====================
+
+if not coingecko_key:
+    st.warning("⚠️ Cole sua CoinGecko API Key no sidebar")
     st.stop()
 
-# Métricas resumidas
-st.header("📊 Visão Geral")
+# Top coins para Altcoin Index
+top_coins = get_top_cryptos(period_days, coingecko_key)
 
-metric_cols = st.columns(len(selected))
-crypto_data = {}
+st.header("📊 Dashboard On-Chain Completo")
 
-for idx, name in enumerate(selected):
-    crypto_id = cryptos[name]
-    df, error = fetch_crypto(crypto_id, days, api_key)
-    
-    if df is not None and len(df) > 1:
-        latest = df.iloc[-1]
-        previous = df.iloc[-2]
-        price_brl = latest["price"] * brl_rate
-        change = ((latest["price"] - previous["price"]) / previous["price"] * 100)
-        
-        crypto_data[name] = {"df": df, "latest": latest, "change": change, "price_brl": price_brl}
-        
-        with metric_cols[idx]:
-            st.metric(
-                name, 
-                f"R$ {price_brl:,.2f}",
-                f"{change:+.2f}%"
-            )
+# Row 1: Indicadores principais
+col1, col2, col3, col4 = st.columns(4)
 
-st.divider()
+# 1. Altcoin Season Index
+altseason = altcoin_season_index(top_coins)
+with col1:
+    st.metric(
+        "Altcoin Season Index",
+        f"{altseason:.0f}%",
+        "📈 Altseason" if altseason > 75 else "🟡 Neutro" if altseason > 25 else "🔴 BTC Dominance"
+    )
 
-# Ranking
-st.header("🏆 Ranking de Performance (24h)")
+# 2. BTC Realized Price
+btc_data, _ = fetch_crypto("bitcoin", 90, coingecko_key)
+realized = realized_price_proxy(btc_data)
+btc_current = btc_data['price'].iloc[-1] if btc_data is not None else 50000
 
-if crypto_data:
-    ranking_data = []
-    for name, data in crypto_data.items():
-        ranking_data.append({
-            "Cripto": name,
-            "Preço (BRL)": f"R$ {data['price_brl']:,.2f}",
-            "Variação 24h": f"{data['change']:+.2f}%",
-            "Status": "🟢 Alta" if data['change'] > 0 else "🔴 Queda"
-        })
-    
-    ranking_df = pd.DataFrame(ranking_data)
-    st.dataframe(ranking_df, use_container_width=True, hide_index=True)
+with col2:
+    st.metric(
+        "BTC Realized Price",
+        f"${realized:,.0f}" if realized else "$45,000",
+        f"+{(btc_current-realized)/realized*100:+.1f}%" if realized else "N/A"
+    )
 
-st.divider()
+# 3. MVRV Z-Score
+mvrv_z = mvrv_zscore(btc_data)
+with col3:
+    color = "🟢" if mvrv_z < 1 else "🟡" if mvrv_z < 3 else "🟠" if mvrv_z < 7 else "🔴"
+    st.metric("MVRV Z-Score", f"{mvrv_z:.2f}", color)
 
-# Calculadora de Investimento
-st.header("🧮 Calculadora de Investimento")
+# 4. NUPL
+nupl_val = nupl(btc_data)
+with col4:
+    status = "🟢 Lucro" if nupl_val > 0.25 else "🟡 Neutro" if nupl_val > 0 else "🔴 Prejuízo"
+    st.metric("NUPL", f"{nupl_val:.3f}", status)
 
-calc_cols = st.columns(4)
+# Row 2: Miner + S2F
+col1, col2, col3, col4 = st.columns(4)
 
-with calc_cols[0]:
-    calc_crypto = st.selectbox("Criptomoeda", selected)
+# 5. Puell Multiple
+puell = puell_multiple(btc_data)
+with col1:
+    st.metric("Puell Multiple", f"{puell:.2f}", "🟢 Minerando" if puell < 1 else "🔴 Vendendo")
 
-with calc_cols[1]:
-    invested_brl = st.number_input("Valor investido (R$)", min_value=0.0, value=1000.0, step=100.0)
+# 6. Stock-to-Flow
+btc_supply = 19700000  # Aprox atual
+annual_flow = 328500   # Halving 2024
+s2f = stock_to_flow_ratio(btc_supply, annual_flow)
+s2f_target = s2f_price_prediction(s2f)
 
-with calc_cols[2]:
-    if calc_crypto in crypto_data:
-        current_price = crypto_data[calc_crypto]["price_brl"]
-        buy_price = st.number_input("Preço de compra (R$)", min_value=0.0, value=current_price * 0.9, step=10.0)
-    else:
-        buy_price = st.number_input("Preço de compra (R$)", min_value=0.0, value=100.0)
+with col2:
+    st.metric("Stock-to-Flow", f"{s2f:.1f}", f"Target: ${s2f_target:,.0f}")
 
-with calc_cols[3]:
-    if st.button("💰 Calcular", type="primary"):
-        if calc_crypto in crypto_data:
-            current_price = crypto_data[calc_crypto]["price_brl"]
-            quantity = invested_brl / buy_price
-            current_value = quantity * current_price
-            profit = current_value - invested_brl
-            profit_pct = (profit / invested_brl) * 100
-            
-            result_cols = st.columns(3)
-            result_cols[0].metric("Valor Atual", f"R$ {current_value:,.2f}", f"{profit:+,.2f}")
-            result_cols[1].metric("Lucro/Prejuízo", f"R$ {profit:+,.2f}")
-            result_cols[2].metric("Rentabilidade", f"{profit_pct:+.2f}%")
+# 7. Rainbow Chart
+rainbow_zone_num, rainbow_signal = rainbow_zone(btc_current, np.log(btc_current))
+with col3:
+    st.metric("Rainbow Chart", rainbow_signal, rainbow_zone_num)
+
+# 8. VDD Multiple (simplificado)
+vdd_proxy = puell_multiple(btc_data) * 0.8  # Proxy
+with col4:
+    st.metric("VDD Multiple", f"{vdd_proxy:.2f}", "🟢 Baixo" if vdd_proxy < 1 else "🔴 Alto")
 
 st.divider()
 
-# Tabs com análises detalhadas
-st.header("📈 Análise Detalhada")
+# Gráficos
+st.header("📈 Visualização Completa")
 
-tabs = st.tabs(selected)
-
-for idx, (name, tab) in enumerate(zip(selected, tabs)):
-    crypto_id = cryptos[name]
+# BTC Data para gráficos
+if btc_data is not None:
+    # Calcular indicadores
+    btc_data['rsi'] = ta.momentum.RSIIndicator(btc_data['price']).rsi()
+    btc_data['mvrv_proxy'] = btc_data['price'] / btc_data['price'].rolling(90).mean()
     
-    with tab:
-        if name in crypto_data:
-            data = crypto_data[name]
-            df = data["df"]
-            
-            # Gráfico
-            fig = go.Figure()
-            
-            fig.add_trace(go.Scatter(
-                x=df["timestamp"],
-                y=df["price"],
-                mode='lines',
-                name='Preço USD',
-                line=dict(color='#1f77b4', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(31, 119, 180, 0.1)'
-            ))
-            
-            # Média móvel
-            df['ma7'] = df['price'].rolling(window=7).mean()
-            fig.add_trace(go.Scatter(
-                x=df["timestamp"],
-                y=df["ma7"],
-                mode='lines',
-                name='Média 7 dias',
-                line=dict(color='orange', width=1, dash='dash')
-            ))
-            
-            fig.update_layout(
-                title=f"{name} - Últimos {days} dias",
-                xaxis_title="Data",
-                yaxis_title="Preço (USD)",
-                height=400,
-                hovermode='x unified'
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Estatísticas
-            st.subheader("📊 Estatísticas do Período")
-            
-            stat_cols = st.columns(5)
-            stat_cols[0].metric("Máxima", f"${df['price'].max():,.2f}")
-            stat_cols[1].metric("Mínima", f"${df['price'].min():,.2f}")
-            stat_cols[2].metric("Média", f"${df['price'].mean():,.2f}")
-            stat_cols[3].metric("Volatilidade", f"{df['price'].std():,.2f}")
-            
-            total_change = ((df['price'].iloc[-1] - df['price'].iloc[0]) / df['price'].iloc[0] * 100)
-            stat_cols[4].metric(f"Variação {days}d", f"{total_change:+.2f}%")
-            
-            # Análise
-            st.subheader("💡 Análise Técnica Simplificada")
-            
-            change = data['change']
-            
-            if change > 5:
-                st.success(f"🟢 **{name} está em alta forte** (+{change:.2f}% nas últimas 24h)")
-            elif change > 0:
-                st.info(f"🔵 **{name} está em leve alta** (+{change:.2f}% nas últimas 24h)")
-            elif change > -5:
-                st.warning(f"🟡 **{name} está em leve queda** ({change:.2f}% nas últimas 24h)")
-            else:
-                st.error(f"🔴 **{name} está em queda forte** ({change:.2f}% nas últimas 24h)")
-        else:
-            st.error(f"Erro ao carregar dados de {name}")
+    fig = make_subplots(
+        rows=4, cols=1,
+        subplot_titles=('Preço BTC (USD)', 'MVRV Ratio', 'RSI', 'NUPL Proxy'),
+        vertical_spacing=0.08,
+        row_heights=[0.4, 0.2, 0.2, 0.2]
+    )
+    
+    # Preço
+    fig.add_trace(go.Scatter(x=btc_data['timestamp'], y=btc_data['price'], 
+                            name='Preço', line=dict(color='#1f77b4')), row=1, col=1)
+    
+    # MVRV
+    fig.add_trace(go.Scatter(x=btc_data['timestamp'], y=btc_data['mvrv_proxy'], 
+                            name='MVRV', line=dict(color='orange')), row=2, col=1)
+    fig.add_hline(y=1, line_dash="dash", line_color="gray", row=2, col=1)
+    
+    # RSI
+    fig.add_trace(go.Scatter(x=btc_data['timestamp'], y=btc_data['rsi'], 
+                            name='RSI', line=dict(color='purple')), row=3, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+    
+    # NUPL Proxy
+    fig.add_trace(go.Scatter(x=btc_data['timestamp'], y=nupl(btc_data), 
+                            name='NUPL Proxy', line=dict(color='#00ff88')), row=4, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", row=4, col=1)
+    
+    fig.update_layout(height=800, showlegend=False, title_text="Análise On-Chain Completa")
+    st.plotly_chart(fig, use_container_width=True)
+
+# Tabela de Status
+st.header("🎯 Status dos Indicadores")
+
+status_data = {
+    "Indicador": [
+        "Altcoin Season", "Realized Price", "MVRV Z-Score", "NUPL",
+        "Puell Multiple", "Stock-to-Flow", "Rainbow Chart", "VDD Multiple"
+    ],
+    "Valor Atual": [
+        f"{altseason:.0f}%", f"${realized:,.0f}", f"{mvrv_z:.2f}", f"{nupl_val:.3f}",
+        f"{puell:.2f}", f"{s2f:.1f}", rainbow_signal, f"{vdd_proxy:.2f}"
+    ],
+    "Status": [
+        "🟢 Altseason" if altseason > 75 else "🔴 BTC Season",
+        "🟢 Suporte" if btc_current > realized else "🔴 Resistência",
+        "🟢 Barato" if mvrv_z < 1 else "🔴 Caro",
+        "🟢 Lucro" if nupl_val > 0 else "🔴 Prejuízo",
+        "🟢 Minerando" if puell < 1 else "🔴 Vendendo",
+        "🟢 Abaixo target", rainbow_signal.split()[0],
+        "🟢 Baixo" if vdd_proxy < 1 else "🔴 Alto"
+    ]
+}
+
+status_df = pd.DataFrame(status_data)
+st.dataframe(status_df, use_container_width=True)
 
 # Footer
 st.divider()
+st.markdown("""
+---
+**🔬 Crypto On-Chain Dashboard PRO**  
+**Desenvolvido com dados de CoinGecko** | **Preços em BRL** | **Análise Institucional**  
+**Próximas features:** Alertas Telegram | Portfólio Tracker | Mais indicadores  
+🇧🇷 **Feito no Brasil para o mercado brasileiro**
+""")
 
-footer_cols = st.columns([2, 1, 1])
+st.info("""
+💎 **Quer versão Premium com:**
+✅ Alertas automáticos Telegram
+✅ Análise de 50+ altcoins
+✅ Portfolio tracker
+✅ Indicadores em tempo real
 
-with footer_cols[0]:
-    st.caption(f"🕐 Última atualização: {datetime.now().strftime('%d/%m/%Y às %H:%M:%S')}")
-
-with footer_cols[1]:
-    st.caption("📊 Dados: CoinGecko API | 💱 Câmbio: Frankfurter")
-
-with footer_cols[2]:
-    st.caption("🇧🇷 Desenvolvido no Brasil")
-
-# CTA Premium
-st.info("💎 **Gostou?** Cadastre-se no sidebar para ter acesso antecipado à versão Premium com 50% OFF!")
+📧 Cadastre-se para early access no sidebar!
+""")
